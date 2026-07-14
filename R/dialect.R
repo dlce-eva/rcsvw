@@ -29,7 +29,7 @@ csvw_dialect <- function(
   skipColumns = 0,
   skipInitialSpace = FALSE,
   skipRows = 0,
-  trim = TRUE,
+  trim = FALSE,
   ...
 ) {
   if (!is.null(delimiter)) {

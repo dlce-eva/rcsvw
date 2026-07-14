@@ -2,8 +2,8 @@ Package: rcsvw
 Type: Package
 Title: Read, Write and Validate CSV on the Web (CSVW)
 Version: 0.1.0
-Author: Robert <robert@example.com>
-Maintainer: Robert <robert@example.com>
+Author: Robert <robert_forkel@eva.mpg.de>
+Maintainer: Robert <robert_forkel@eva.mpg.de>
 Description: R implementation of the W3C CSV on the Web (CSVW) specifications.
     Allows loading metadata, reading and writing tables, validating schema constraints,
     checking primary/foreign keys, and converting data to JSON.

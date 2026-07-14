@@ -14,7 +14,8 @@ shorten_uri <- function(uri) {
     "dcat" = "http://www.w3.org/ns/dcat#",
     "prov" = "http://www.w3.org/ns/prov#",
     "void" = "http://rdfs.org/ns/void#",
-    "csvw" = "http://www.w3.org/ns/csvw#"
+    "csvw" = "http://www.w3.org/ns/csvw#",
+    "rdf" = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
   )
   
   for (name in names(prefixes)) {
@@ -22,6 +23,30 @@ shorten_uri <- function(uri) {
     if (startsWith(uri, prefix_val)) {
       suffix <- substring(uri, nchar(prefix_val) + 1)
       return(paste0(name, ":", suffix))
+    }
+  }
+  return(uri)
+}
+
+expand_prefix_uri <- function(uri) {
+  if (is.null(uri) || !is.character(uri)) return(uri)
+  
+  prefixes <- list(
+    "schema" = "http://schema.org/",
+    "xsd" = "http://www.w3.org/2001/XMLSchema#",
+    "dc" = "http://purl.org/dc/terms/",
+    "dcat" = "http://www.w3.org/ns/dcat#",
+    "prov" = "http://www.w3.org/ns/prov#",
+    "void" = "http://rdfs.org/ns/void#",
+    "csvw" = "http://www.w3.org/ns/csvw#",
+    "rdf" = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  )
+  
+  for (name in names(prefixes)) {
+    prefix_val <- prefixes[[name]]
+    if (startsWith(uri, paste0(name, ":"))) {
+      suffix <- substring(uri, nchar(name) + 2)
+      return(paste0(prefix_val, suffix))
     }
   }
   return(uri)
@@ -37,6 +62,38 @@ format_json_value <- function(val) {
   }
   if (is.list(val)) {
     return(lapply(val, format_json_value))
+  }
+  return(val)
+}
+
+clean_jsonld_value <- function(val, base_url = NULL) {
+  if (is.null(val)) return(NULL)
+  
+  if (is.list(val)) {
+    if (!is.null(names(val))) {
+      # object/named list
+      if ("@value" %in% names(val)) {
+        return(val[["@value"]])
+      }
+      if ("@id" %in% names(val)) {
+        uri <- val[["@id"]]
+        uri <- expand_prefix_uri(uri)
+        if (!is.null(base_url)) {
+          return(resolve_url(base_url, uri))
+        }
+        return(uri)
+      }
+      cleaned <- lapply(val, clean_jsonld_value, base_url = base_url)
+      return(cleaned)
+    } else {
+      # array/unnamed list
+      cleaned <- lapply(val, clean_jsonld_value, base_url = base_url)
+      # Simplify atomic vectors if possible, to match jsonlite structure
+      if (length(cleaned) > 0 && all(sapply(cleaned, function(x) is.character(x) && length(x) == 1))) {
+        return(unlist(cleaned))
+      }
+      return(cleaned)
+    }
   }
   return(val)
 }
@@ -67,8 +124,17 @@ to_json.csvw <- function(x, minimal = FALSE, ...) {
     
     tbl_json <- list()
     tbl_json$url <- tbl$url
-    if (!is.null(tbl$common_properties) && length(tbl$common_properties) > 0) {
-      tbl_json <- c(tbl_json, tbl$common_properties)
+    
+    if (!is.null(tbl$id)) {
+      tbl_json[["@id"]] <- clean_jsonld_value(tbl$id, base_url = tbl$url)
+    }
+    if (!is.null(tbl$notes)) {
+      tbl_json[["notes"]] <- clean_jsonld_value(tbl$notes, base_url = tbl$url)
+    }
+    
+    cleaned_common_tbl <- clean_jsonld_value(tbl$common_properties, base_url = tbl$url)
+    if (!is.null(cleaned_common_tbl) && length(cleaned_common_tbl) > 0) {
+      tbl_json <- c(tbl_json, cleaned_common_tbl)
     }
     
     rows_json <- list()
@@ -132,13 +198,17 @@ to_json.csvw <- function(x, minimal = FALSE, ...) {
           if (!is.null(propUrl)) {
             prop <- resolve_url(tbl$url, prop)
           }
-          prop <- shorten_uri(prop)
+          prop <- shorten_uri(expand_prefix_uri(prop))
           
           # valueUrl
           valUrl <- inherit_val(col, "valueUrl")
           val_final <- if (!is.null(valUrl)) expand_uri_template(valUrl, cell_context) else val
           if (!is.null(valUrl)) {
             val_final <- resolve_url(tbl$url, val_final)
+            val_final <- expand_prefix_uri(val_final)
+          }
+          if (prop == "rdf:type" || prop == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" || prop == "@type") {
+            val_final <- shorten_uri(val_final)
           }
           val_final <- format_json_value(val_final)
           
@@ -166,12 +236,16 @@ to_json.csvw <- function(x, minimal = FALSE, ...) {
             if (!is.null(propUrl)) {
               prop <- resolve_url(tbl$url, prop)
             }
-            prop <- shorten_uri(prop)
+            prop <- shorten_uri(expand_prefix_uri(prop))
             
             valUrl <- inherit_val(col, "valueUrl")
             val_final <- if (!is.null(valUrl)) expand_uri_template(valUrl, cell_context) else col$default
             if (!is.null(valUrl)) {
               val_final <- resolve_url(tbl$url, val_final)
+              val_final <- expand_prefix_uri(val_final)
+            }
+            if (prop == "rdf:type" || prop == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" || prop == "@type") {
+              val_final <- shorten_uri(val_final)
             }
             val_final <- format_json_value(val_final)
             
@@ -198,7 +272,7 @@ to_json.csvw <- function(x, minimal = FALSE, ...) {
           prop <- tr$property
           val <- tr$value
           
-          if (prop == "rdf:type") prop <- "@type"
+          if (prop == "rdf:type" || prop == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type") prop <- "@type"
           
           # Unbox single value or append list
           if (is.null(nodes[[about_key]][[prop]])) {
@@ -281,8 +355,19 @@ to_json.csvw <- function(x, minimal = FALSE, ...) {
   }
   
   res <- list(tables = tables_json)
-  if (inherits(t_obj, "csvw_table_group") && !is.null(t_obj$common_properties)) {
-    res <- c(t_obj$common_properties, res)
+  
+  if (inherits(t_obj, "csvw_table_group")) {
+    if (!is.null(t_obj$id)) {
+      res[["@id"]] <- clean_jsonld_value(t_obj$id, base_url = t_obj$url)
+    }
+    if (!is.null(t_obj$notes)) {
+      res[["notes"]] <- clean_jsonld_value(t_obj$notes, base_url = t_obj$url)
+    }
+    
+    cleaned_common <- clean_jsonld_value(t_obj$common_properties, base_url = t_obj$url)
+    if (!is.null(cleaned_common) && length(cleaned_common) > 0) {
+      res <- c(cleaned_common, res)
+    }
   }
   
   return(res)

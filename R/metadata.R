@@ -1266,7 +1266,9 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
     })
     
     col_required <- sapply(matched_cols, function(col) isTRUE(col$required))
-    col_defaults <- lapply(matched_cols, function(col) col$default)
+    col_defaults <- lapply(matched_cols, function(col) {
+      if (!is.null(col$default) && col$default != "") col$default else NULL
+    })
     col_seps <- lapply(matched_cols, function(col) col$separator)
     col_datatypes <- lapply(matched_cols, function(col) col$datatype)
     col_names <- sapply(matched_cols, function(col) col$name)
@@ -1299,7 +1301,6 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
       } else {
         is_null_val <- is_null_val | (col_vals == "")
       }
-      
       # Apply default values
       col_default <- col_defaults[[j]]
       if (!is.null(col_default)) {
@@ -1328,6 +1329,18 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
         if (!is.null(col_sep) && col_sep != "") {
           parsed_non_null <- lapply(non_null_vals, function(val_str) {
             parts <- strsplit(val_str, col_sep, fixed = TRUE)[[1]]
+            col_obj <- matched_cols[[j]]
+            explicit_false <- FALSE
+            if (!is.null(col_obj$trim)) {
+              if (is.logical(col_obj$trim)) {
+                explicit_false <- !col_obj$trim
+              } else if (is.character(col_obj$trim)) {
+                explicit_false <- (tolower(col_obj$trim) == "false")
+              }
+            }
+            if (!explicit_false) {
+              parts <- trimws(parts)
+            }
             lapply(parts, parse_cell, dt = col_dt, strict = FALSE, validate = validate)
           })
         } else {

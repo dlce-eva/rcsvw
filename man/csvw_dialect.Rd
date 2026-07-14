@@ -17,7 +17,7 @@ csvw_dialect(
   skipColumns = 0,
   skipInitialSpace = FALSE,
   skipRows = 0,
-  trim = TRUE,
+  trim = FALSE,
   ...
 )
 }

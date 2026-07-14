@@ -22,7 +22,7 @@ BUILT_IN_DATATYPES <- c(
   "negativeInteger", "double", "duration", "dayTimeDuration", "yearMonthDuration", "float", 
   "gDay", "gMonth", "gMonthDay", "gYear", "gYearMonth", "hexBinary", "QName", "string", 
   "normalizedString", "token", "language", "Name", "NCName", "NMTOKEN", "time",
-  "number", "binary", "datetime", "json", "JSON"
+  "number", "binary", "datetime", "json", "JSON", "xml", "html", "any"
 )
 
 is_builtin_datatype <- function(type_str) {
