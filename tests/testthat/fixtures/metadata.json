@@ -1,0 +1,34 @@
+{
+  "@context": "http://www.w3.org/ns/csvw",
+  "tables": [
+    {
+      "url": "tree.csv",
+      "tableSchema": {
+        "columns": [
+          {"name": "id", "datatype": "integer", "required": true},
+          {"name": "name", "datatype": "string"}
+        ],
+        "primaryKey": "id"
+      }
+    },
+    {
+      "url": "measurement.csv",
+      "tableSchema": {
+        "columns": [
+          {"name": "tree_id", "datatype": "integer", "required": true},
+          {"name": "date", "datatype": "date"},
+          {"name": "height", "datatype": "decimal"}
+        ],
+        "foreignKeys": [
+          {
+            "columnReference": "tree_id",
+            "reference": {
+              "resource": "tree.csv",
+              "columnReference": "id"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

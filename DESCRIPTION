@@ -1,0 +1,20 @@
+Package: rcsvw
+Type: Package
+Title: Read, Write and Validate CSV on the Web (CSVW)
+Version: 0.1.0
+Author: Robert <robert@example.com>
+Maintainer: Robert <robert@example.com>
+Description: R implementation of the W3C CSV on the Web (CSVW) specifications.
+    Allows loading metadata, reading and writing tables, validating schema constraints,
+    checking primary/foreign keys, and converting data to JSON.
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Imports:
+    jsonlite,
+    readr,
+    httr
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0
