@@ -44,3 +44,61 @@ test_that("referential integrity validation and JSON-LD conversion work", {
   expect_type(js_min, "list")
   expect_length(js_min, 5) # 2 trees + 3 measurements = 5 records
 })
+
+test_that("whitespace in required column is valid by default (no trim)", {
+  csv_content <- "col1\n\"   \"\n"
+  csv_file <- tempfile(fileext = ".csv")
+  writeLines(csv_content, csv_file)
+  
+  # create metadata
+  md <- list(
+    url = basename(csv_file),
+    tableSchema = list(
+      columns = list(
+        list(name = "col1", titles = "col1", required = TRUE, datatype = "string")
+      )
+    )
+  )
+  md_file <- tempfile(fileext = ".json")
+  jsonlite::write_json(md, md_file, auto_unbox = TRUE)
+  
+  # Run validation
+  c_obj <- csvw(md_file, validate = TRUE)
+  expect_true(c_obj$is_valid)
+  expect_length(c_obj$warnings, 0)
+  
+  # Clean up
+  unlink(csv_file)
+  unlink(md_file)
+})
+
+test_that("NA string is not considered null unless explicitly in null spec", {
+  csv_content <- "col1\n\"NA\"\n"
+  csv_file <- tempfile(fileext = ".csv")
+  writeLines(csv_content, csv_file)
+  
+  # create metadata
+  md <- list(
+    url = basename(csv_file),
+    tableSchema = list(
+      columns = list(
+        list(name = "col1", titles = "col1", required = TRUE, datatype = "string")
+      )
+    )
+  )
+  md_file <- tempfile(fileext = ".json")
+  jsonlite::write_json(md, md_file, auto_unbox = TRUE)
+  
+  # Run validation
+  c_obj <- csvw(md_file, validate = TRUE)
+  expect_true(c_obj$is_valid)
+  expect_length(c_obj$warnings, 0)
+  
+  # Check value in data frame
+  df <- as.data.frame(c_obj$t)
+  expect_equal(df$col1[1], "NA")
+  
+  # Clean up
+  unlink(csv_file)
+  unlink(md_file)
+})

@@ -1087,6 +1087,7 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
         escape_double = escape_double,
         col_names = FALSE,
         col_types = readr::cols(.default = readr::col_character()),
+        na = character(),
         skip = skip,
         locale = loc,
         show_col_types = FALSE,
