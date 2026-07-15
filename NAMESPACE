@@ -5,6 +5,8 @@ export(validate_csvw)
 export(to_json)
 export(check_referential_integrity)
 export(get_table)
+export(parse_column)
+export(csvw_dialect)
 
 # Register S3 methods
 S3method(as.data.frame, csvw_table)
@@ -15,4 +17,3 @@ S3method(get_table, csvw)
 
 
 importFrom(utils, unzip)
-

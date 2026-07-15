@@ -50,6 +50,14 @@ resolve_url <- function(base, ref) {
     if (!is.null(ref_parsed$scheme)) {
       return(ref)
     }
+
+    # A leading slash is relative to the origin, not to the current URL path.
+    if (startsWith(ref, "/")) {
+      base_parsed$path <- clean_path(ref)
+      base_parsed$query <- ref_parsed$query
+      base_parsed$fragment <- ref_parsed$fragment
+      return(httr::build_url(base_parsed))
+    }
     
     base_path <- base_parsed$path
     if (is.null(base_path) || base_path == "") {
@@ -125,10 +133,6 @@ normalize_url_local <- function(url_or_path) {
             local_dir <- system.file("tests", "testthat", "w3c-tests", package = "rcsvw")
           }
         }
-        if (is.null(local_dir) || !dir.exists(local_dir) || nchar(local_dir) == 0) {
-          local_dir <- "/home/robert/.gemini/antigravity-ide/brain/4ff6e7f6-8ed9-4190-8c7d-b995067d7ce4/csvw-tests/tests/"
-        }
-        
         if (dir.exists(local_dir)) {
           rel_path <- substring(url_or_path, nchar(pat) + 1)
           rel_path <- sub("#.*$", "", rel_path)
@@ -141,6 +145,15 @@ normalize_url_local <- function(url_or_path) {
       }
     }
   }
+
+  # Query strings and fragments are URI components, not part of a local
+  # filesystem name. Canonicalizing also avoids /tmp versus /private/tmp
+  # mismatches on macOS when comparing described resources.
+  if (is.character(url_or_path) && length(url_or_path) == 1 && !is_url(url_or_path)) {
+    local_path <- sub("[?#].*$", "", url_or_path)
+    return(normalizePath(local_path, mustWork = FALSE))
+  }
+
   return(url_or_path)
 }
 

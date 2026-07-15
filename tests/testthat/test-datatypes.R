@@ -40,6 +40,24 @@ test_that("integer range constraints work", {
   dt_unsigned <- parse_datatype("unsignedShort")
   expect_equal(parse_cell("65530", dt_unsigned), 65530)
   expect_error(parse_cell("-5", dt_unsigned))
+
+  # Values wider than R's signed 32-bit integer must not silently become NA.
+  dt_unsigned_int <- parse_datatype("unsignedInt")
+  expect_equal(parse_cell("4294967295", dt_unsigned_int), 4294967295)
+
+  # Values wider than an exactly representable R double are retained as text.
+  dt_unsigned_long <- parse_datatype("unsignedLong")
+  expect_equal(parse_cell("18446744073709551615", dt_unsigned_long), "18446744073709551615")
+  expect_error(parse_cell("18446744073709551616", dt_unsigned_long))
+
+  dt_constrained_long <- parse_datatype(list(
+    base = "unsignedLong", minInclusive = "18446744073709551614"
+  ))
+  expect_equal(
+    parse_cell("18446744073709551615", dt_constrained_long),
+    "18446744073709551615"
+  )
+  expect_error(parse_cell("18446744073709551613", dt_constrained_long))
 })
 
 test_that("date and datetime parsing works", {
@@ -71,4 +89,3 @@ test_that("json datatype parsing works and returns data as plain string", {
   expect_equal(dt_json_upper$base, "JSON")
   expect_equal(parse_cell('[1, 2, 3]', dt_json_upper), '[1, 2, 3]')
 })
-

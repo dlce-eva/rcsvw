@@ -47,6 +47,7 @@ test_that("as.data.frame handles list-columns containing NULL values cleanly", {
   expect_equal(nrow(df), 2)
   expect_equal(df$tags[[1]], list("A", "B"))
   expect_equal(df$tags[[2]], list(NA))
+  expect_false(any(c("_row", "_sourceRow", "X_sourceRow") %in% names(df)))
 })
 
 test_that("unmatched metadata columns are ignored during non-validating reading", {

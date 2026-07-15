@@ -16,6 +16,7 @@
 #' @param trim logical or character specifying how values are trimmed
 #' @param ... other attributes
 #' @return a csvw_dialect object
+#' @export
 csvw_dialect <- function(
   commentPrefix = NULL,
   delimiter = ",",

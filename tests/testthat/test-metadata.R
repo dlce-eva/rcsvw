@@ -51,6 +51,109 @@ test_that("property inheritance works", {
   expect_equal(inherit_null(col2), "NULL")
 })
 
+test_that("inherited datatype, separator, and required properties affect cells", {
+  data_file <- tempfile(fileext = ".csv")
+  writeLines(c("values", "1;2"), data_file)
+  on.exit(unlink(data_file))
+
+  tbl <- parse_table(list(
+    url = data_file,
+    tableSchema = list(
+      datatype = "integer",
+      separator = ";",
+      required = TRUE,
+      columns = list(list(name = "values"))
+    )
+  ))
+
+  rows <- read_table_csv(tbl, strict = TRUE)
+  expect_equal(rows[[1]]$values, list(1L, 2L))
+  expect_true(inherit_val(tbl$tableSchema$columns[[1]], "required"))
+})
+
+test_that("reordered CSV columns are matched by name", {
+  data_file <- tempfile(fileext = ".csv")
+  writeLines(c("label,id", "item,1"), data_file)
+  on.exit(unlink(data_file))
+
+  tbl <- parse_table(list(
+    url = data_file,
+    tableSchema = list(columns = list(
+      list(name = "id", datatype = "integer"),
+      list(name = "label", datatype = "string")
+    ))
+  ))
+
+  rows <- read_table_csv(tbl, strict = TRUE)
+  expect_equal(rows[[1]]$id, 1L)
+  expect_equal(rows[[1]]$label, "item")
+})
+
+test_that("primary key encoding cannot collide with user strings", {
+  single_schema <- structure(list(primaryKey = "id"), class = "csvw_table_schema")
+  single_table <- structure(list(tableSchema = single_schema), class = "csvw_table")
+  expect_true(check_primary_key(single_table, list(list(id = "NULL"))))
+
+  composite_schema <- structure(
+    list(primaryKey = c("left", "right")), class = "csvw_table_schema"
+  )
+  composite_table <- structure(list(tableSchema = composite_schema), class = "csvw_table")
+  expect_true(check_primary_key(composite_table, list(
+    list(left = "a||b", right = "c"),
+    list(left = "a", right = "b||c")
+  )))
+})
+
+test_that("typed list-valued foreign keys use inherited separators", {
+  group <- parse_table_group(list(tables = list(
+    list(
+      url = "source.csv",
+      tableSchema = list(
+        separator = " ",
+        columns = list(list(name = "refs", datatype = "integer")),
+        foreignKeys = list(list(
+          columnReference = "refs",
+          reference = list(resource = "target.csv", columnReference = "id")
+        ))
+      )
+    ),
+    list(
+      url = "target.csv",
+      tableSchema = list(columns = list(list(name = "id", datatype = "integer")))
+    )
+  )))
+  group$tables[[1]]$data <- list(list(refs = list(1L, 2L)))
+  group$tables[[2]]$data <- list(list(id = 1L), list(id = 2L))
+
+  expect_true(check_referential_integrity(group))
+})
+
+test_that("standard directory metadata is discovered", {
+  directory <- tempfile("csvw-directory-")
+  dir.create(directory)
+  on.exit(unlink(directory, recursive = TRUE))
+
+  data_file <- file.path(directory, "data.csv")
+  writeLines(c("id", "1"), data_file)
+  jsonlite::write_json(list(
+    `@context` = "http://www.w3.org/ns/csvw",
+    tables = list(list(
+      url = "data.csv",
+      tableSchema = list(columns = list(list(name = "id", datatype = "integer")))
+    ))
+  ), file.path(directory, "csv-metadata.json"), auto_unbox = TRUE)
+
+  obj <- csvw(data_file)
+  expect_equal(obj$tables[[1]]$data[[1]]$id, 1L)
+})
+
+test_that("root-relative URLs resolve against the origin", {
+  expect_equal(
+    resolve_url("https://example.org/a/b.csv", "/.well-known/csvm"),
+    "https://example.org/.well-known/csvm"
+  )
+})
+
 test_that("reading zipped CSV tables works when .zip is appended to the URL", {
   csv_file <- tempfile(fileext = ".csv")
   writeLines("ID,Name\n1,Alice\n2,Bob", csv_file)
