@@ -38,7 +38,7 @@ resolve_url <- function(base, ref) {
     }
   }
   
-  if (grepl("^/", ref) && !is_url(base)) {
+  if (grepl("^(/|\\\\|[A-Za-z]:)", ref) && !is_url(base)) {
     return(ref)
   }
   

@@ -322,3 +322,21 @@ test_that("compatibility matching checks name first and then titles", {
   expect_length(rows, 1)
   expect_equal(rows[[1]]$col_name, "value1")
 })
+
+test_that("resolve_url correctly handles absolute paths", {
+  # Unix absolute path
+  expect_equal(rcsvw:::resolve_url("/base/path", "/absolute/path"), "/absolute/path")
+  
+  # Windows absolute path with drive letter
+  expect_equal(rcsvw:::resolve_url("C:\\base\\path", "D:\\absolute\\path"), "D:\\absolute\\path")
+  expect_equal(rcsvw:::resolve_url("c:/base/path", "d:/absolute/path"), "d:/absolute/path")
+  
+  # Windows absolute path starting with backslash/UNC
+  expect_equal(rcsvw:::resolve_url("C:\\base\\path", "\\absolute\\path"), "\\absolute\\path")
+  
+  # Relative path should still resolve relative to base
+  res <- rcsvw:::resolve_url("C:\\base\\path", "relative\\path")
+  expect_true(grepl("relative", res))
+  expect_true(grepl("base", res))
+})
+
