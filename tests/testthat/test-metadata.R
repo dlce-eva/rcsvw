@@ -89,6 +89,27 @@ test_that("reordered CSV columns are matched by name", {
   expect_equal(rows[[1]]$label, "item")
 })
 
+test_that("columns not matched by name or title do not fall back positionally", {
+  data_file <- tempfile(fileext = ".csv")
+  writeLines(c("some_random_header,id", "random_val,1"), data_file)
+  on.exit(unlink(data_file))
+
+  tbl <- parse_table(list(
+    url = data_file,
+    tableSchema = list(columns = list(
+      list(name = "id", datatype = "integer"),
+      list(name = "label", datatype = "string")
+    ))
+  ))
+
+  expect_error(read_table_csv(tbl, strict = TRUE, validate = TRUE, lax = FALSE), "is not compatible")
+
+  rows <- read_table_csv(tbl, strict = TRUE, validate = FALSE)
+  expect_equal(rows[[1]]$id, 1L)
+  expect_equal(rows[[1]]$some_random_header, "random_val")
+  expect_null(rows[[1]]$label)
+})
+
 test_that("primary key encoding cannot collide with user strings", {
   single_schema <- structure(list(primaryKey = "id"), class = "csvw_table_schema")
   single_table <- structure(list(tableSchema = single_schema), class = "csvw_table")

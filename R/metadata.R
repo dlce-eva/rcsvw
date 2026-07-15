@@ -945,12 +945,16 @@ locate_metadata <- function(url, md_url = NULL) {
     return(list(md = get_json(md_url), no_header = FALSE, is_located = FALSE, md_url = md_url))
   }
   
-  # Try loading URL directly as JSON
-  md <- tryCatch({
-    get_json(url)
-  }, error = function(e) {
-    NULL
-  })
+  # Try loading URL directly as JSON if it is not a known data file extension
+  is_csv_extension <- grepl("\\.(csv|tsv|txt)(\\.zip)?$", tolower(url))
+  md <- NULL
+  if (!is_csv_extension) {
+    md <- tryCatch({
+      get_json(url)
+    }, error = function(e) {
+      NULL
+    })
+  }
   
   if (!is.null(md)) {
     return(list(md = md, no_header = FALSE, is_located = FALSE, md_url = url))
@@ -1107,6 +1111,20 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
   })
 
   # A final line terminator closes the last record; it must not manufacture an
+  empty_table_data <- function(h_names = NULL) {
+    df_cols <- list(`_row` = integer(), `_sourceRow` = integer())
+    class(df_cols) <- "data.frame"
+    attr(df_cols, "row.names") <- .set_row_names(0)
+    
+    table_data <- structure(list(), class = "csvw_table_data")
+    attr(table_data, "df") <- df_cols
+    attr(table_data, "table") <- table
+    if (!is.null(h_names)) {
+      attr(table_data, "header_names") <- h_names
+    }
+    return(table_data)
+  }
+
   # additional empty record. Keep empty records in the middle of the file when
   # skipBlankRows is false, but discard empty records at the very end.
   row_is_blank <- function(row) {
@@ -1116,7 +1134,7 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
     raw_df <- raw_df[-nrow(raw_df), , drop = FALSE]
   }
   
-  if (nrow(raw_df) == 0) return(list())
+  if (nrow(raw_df) == 0) return(empty_table_data())
   
   # Process skipColumns
   if (dialect$skipColumns > 0 && ncol(raw_df) > dialect$skipColumns) {
@@ -1134,7 +1152,7 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
       trim_value(h, dialect$trim, dialect$skipInitialSpace)
     })
     if (header_count >= nrow(raw_df)) {
-      return(structure(list(), header_names = header_names))
+      return(empty_table_data(header_names))
     }
     raw_df <- raw_df[seq.int(header_count + 1, nrow(raw_df)), , drop = FALSE]
   } else {
@@ -1147,7 +1165,7 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
     raw_df <- raw_df[!is_blank, , drop = FALSE]
   }
   
-  if (nrow(raw_df) == 0) return(list())
+  if (nrow(raw_df) == 0) return(empty_table_data())
   
   schema <- table$tableSchema
   schema_columns <- if (!is.null(schema)) schema$columns else list()
@@ -1232,16 +1250,8 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
   for (j in seq_along(header_names)) {
     hname <- header_names[j]
     col <- NULL
-    if (j <= length(regular_cols)) {
-      col <- regular_cols[[j]]
-    } else {
-      col <- parse_column(list(name = paste0("_col.", j)), generated = TRUE)
-    }
 
-    # Match explicitly described columns by header before falling back to
-    # positional matching. This supports the reordered columns commonly
-    # produced and consumed by pycldf while still rejecting unknown headers
-    # during strict validation.
+    # Match explicitly described columns by header
     if (dialect$header && !is.null(schema) && length(regular_cols) > 0) {
       matching_indices <- which(vapply(
         regular_cols, column_matches_header, logical(1), hname = hname
@@ -1251,17 +1261,18 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
       }
     }
     
-    # Check compatibility if dialect$header is TRUE and schema columns are present
-    if (dialect$header && !is.null(schema) && j <= length(regular_cols)) {
-      if (col$has_titles || col$has_name) {
-        matched <- column_matches_header(col, hname)
-        if (!matched) {
-          if (validate && !lax) {
-            msg <- sprintf("Column header '%s' is not compatible with metadata column titles or name", hname)
-            stop(msg)
-          } else {
-            col <- parse_column(list(name = hname), generated = TRUE)
-          }
+    if (is.null(col)) {
+      if (dialect$header) {
+        if (!is.null(schema) && validate && !lax) {
+          msg <- sprintf("Column header '%s' is not compatible with metadata column titles or name", hname)
+          stop(msg)
+        }
+        col <- parse_column(list(name = hname), generated = TRUE)
+      } else {
+        if (j <= length(regular_cols)) {
+          col <- regular_cols[[j]]
+        } else {
+          col <- parse_column(list(name = paste0("_col.", j)), generated = TRUE)
         }
       }
     }
@@ -1359,21 +1370,40 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
         col_sep <- col_seps[[j]]
         col_dt <- col_datatypes[[j]]
         if (!is.null(col_sep) && col_sep != "") {
-          parsed_non_null <- lapply(non_null_vals, function(val_str) {
-            parts <- strsplit(val_str, col_sep, fixed = TRUE)[[1]]
-            col_obj <- matched_cols[[j]]
-            explicit_false <- FALSE
-            if (!is.null(col_obj$trim)) {
-              if (is.logical(col_obj$trim)) {
-                explicit_false <- !col_obj$trim
-              } else if (is.character(col_obj$trim)) {
-                explicit_false <- (tolower(col_obj$trim) == "false")
+          parsed_non_null <- tryCatch({
+            lapply(non_null_vals, function(val_str) {
+              parts <- strsplit(val_str, col_sep, fixed = TRUE)[[1]]
+              col_obj <- matched_cols[[j]]
+              explicit_false <- FALSE
+              if (!is.null(col_obj$trim)) {
+                if (is.logical(col_obj$trim)) {
+                  explicit_false <- !col_obj$trim
+                } else if (is.character(col_obj$trim)) {
+                  explicit_false <- (tolower(col_obj$trim) == "false")
+                }
               }
-            }
-            if (!explicit_false) {
-              parts <- trimws(parts)
-            }
-            lapply(parts, parse_cell, dt = col_dt, strict = FALSE, validate = validate)
+              if (!explicit_false) {
+                parts <- trimws(parts)
+              }
+              lapply(parts, parse_cell, dt = col_dt, strict = TRUE, validate = validate)
+            })
+          }, error = function(e) {
+            lapply(non_null_vals, function(val_str) {
+              parts <- strsplit(val_str, col_sep, fixed = TRUE)[[1]]
+              col_obj <- matched_cols[[j]]
+              explicit_false <- FALSE
+              if (!is.null(col_obj$trim)) {
+                if (is.logical(col_obj$trim)) {
+                  explicit_false <- !col_obj$trim
+                } else if (is.character(col_obj$trim)) {
+                  explicit_false <- (tolower(col_obj$trim) == "false")
+                }
+              }
+              if (!explicit_false) {
+                parts <- trimws(parts)
+              }
+              lapply(parts, parse_cell, dt = col_dt, strict = FALSE, validate = validate)
+            })
           })
         } else if (identical(col_dt$base, "string") &&
                    length(setdiff(names(col_dt), "base")) == 0) {
@@ -1381,52 +1411,43 @@ read_table_csv <- function(table, strict = TRUE, validate = FALSE, lax = FALSE) 
           # handling or datatype dispatch.
           parsed_non_null <- as.list(non_null_vals)
         } else {
-          parsed_non_null <- lapply(non_null_vals, parse_cell, dt = col_dt, strict = FALSE, validate = validate)
+          parsed_non_null <- tryCatch({
+            lapply(non_null_vals, parse_cell, dt = col_dt, strict = TRUE, validate = validate)
+          }, error = function(e) {
+            lapply(non_null_vals, parse_cell, dt = col_dt, strict = FALSE, validate = validate)
+          })
         }
         parsed_col_vals[non_null_indices] <- parsed_non_null
       }
       parsed_cols[[j]] <- parsed_col_vals
     }
     
-    # Construct rows
+    # Construct rows as columnar data.frame with custom S3 class
     source_rows <- seq_len(nrow_df) + skip + (if (dialect$header) dialect$headerRowCount else 0)
-    rows <- vector("list", nrow_df)
-    has_virtual <- length(virtual_cols) > 0
-    for (i in seq_len(nrow_df)) {
-      row_context <- list()
-      row_context[["_row"]] <- i
-      row_context[["_sourceRow"]] <- source_rows[i]
-      
-      for (j in seq_along(matched_cols)) {
-        val <- parsed_cols[[j]][[i]]
-        if (!is.null(val)) {
-          row_context[[col_names[j]]] <- val
-        }
-      }
-      
-      # Handle virtual columns
-      if (has_virtual) {
-        for (v_idx in seq_along(virtual_cols)) {
-          col <- virtual_cols[[v_idx]]
-          valUrl <- col$valueUrl
-          if (!is.null(valUrl)) {
-            cell_context <- row_context
-            cell_context[["_name"]] <- col$name
-            v_col_idx <- length(regular_cols) + v_idx
-            cell_context[["_column"]] <- v_col_idx
-            cell_context[["_sourceColumn"]] <- v_col_idx
-            row_context[[col$name]] <- expand_uri_template(valUrl, cell_context)
-          } else {
-            row_context[[col$name]] <- col$default
-          }
-        }
-      }
-      
-      rows[[i]] <- row_context
+    df_cols <- list()
+    df_cols[["_row"]] <- seq_len(nrow_df)
+    df_cols[["_sourceRow"]] <- source_rows
+    for (j in seq_along(matched_cols)) {
+      df_cols[[col_names[j]]] <- parsed_cols[[j]]
     }
+    
+    class(df_cols) <- "data.frame"
+    attr(df_cols, "row.names") <- .set_row_names(nrow_df)
+    
+    table_data <- structure(list(), class = "csvw_table_data")
+    attr(table_data, "df") <- df_cols
+    attr(table_data, "table") <- table
+    return(table_data)
   }
   
-  rows
+  df_cols <- list(`_row` = integer(), `_sourceRow` = integer())
+  class(df_cols) <- "data.frame"
+  attr(df_cols, "row.names") <- .set_row_names(0)
+  
+  table_data <- structure(list(), class = "csvw_table_data")
+  attr(table_data, "df") <- df_cols
+  attr(table_data, "table") <- table
+  return(table_data)
 }
 
 is_null_key_value <- function(value) {
@@ -1455,9 +1476,66 @@ check_primary_key <- function(table, rows) {
   schema <- table$tableSchema
   if (is.null(schema) || is.null(schema$primaryKey)) return(TRUE)
   
-  pk_cols <- schema$primaryKey
+  pk_cols <- as.character(unlist(schema$primaryKey))
   success <- TRUE
   
+  is_null_vectorized <- function(col_data) {
+    if (is.list(col_data)) {
+      vapply(col_data, function(x) is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x)), logical(1))
+    } else {
+      is.na(col_data)
+    }
+  }
+
+  df <- NULL
+  if (inherits(rows, "csvw_table_data")) {
+    df <- attr(rows, "df")
+  } else if (is.data.frame(rows)) {
+    df <- rows
+  }
+
+  if (!is.null(df)) {
+    # Fast path for data.frame
+    # Check for nulls
+    for (j in seq_along(pk_cols)) {
+      col_name <- pk_cols[j]
+      col_data <- df[[col_name]]
+      null_idx <- which(is_null_vectorized(col_data))
+      if (length(null_idx) > 0) {
+        success <- FALSE
+        if (length(null_idx) > 100) {
+          warning(sprintf("Primary key column '%s' has %d null values", col_name, length(null_idx)))
+        } else {
+          for (idx in null_idx) {
+            warning(sprintf("Primary key column '%s' is null at row %d", col_name, idx))
+          }
+        }
+      }
+    }
+    
+    # Check duplicates using duplicated() on data.frame columns
+    is_any_list <- any(vapply(pk_cols, function(col) is.list(df[[col]]), logical(1)))
+    if (!is_any_list) {
+      dup_flags <- duplicated(df[, pk_cols, drop = FALSE])
+      if (any(dup_flags)) {
+        success <- FALSE
+        dup_indices <- which(dup_flags)
+        unique_dup_rows <- df[dup_indices, pk_cols, drop = FALSE]
+        unique_dup_indices <- dup_indices[!duplicated(unique_dup_rows)]
+        if (length(unique_dup_indices) > 100) {
+          warning(sprintf("Primary key columns have %d duplicate key values", length(unique_dup_indices)))
+        } else {
+          for (idx in unique_dup_indices) {
+            row_vals <- lapply(pk_cols, function(col_name) df[[col_name]][[idx]])
+            warning(paste("duplicate primary key:", format_key_values(row_vals)))
+          }
+        }
+      }
+      return(success)
+    }
+  }
+  
+  # Fallback for standard list-of-lists rows or list-valued key columns
   key_values <- lapply(rows, function(row) {
     lapply(pk_cols, function(col_name) row[[col_name]])
   })
@@ -1520,10 +1598,10 @@ check_referential_integrity <- function(t_obj, strict = FALSE) {
     tbl_rows <- tbl$data
     
     for (fk in schema$foreignKeys) {
-      source_cols <- fk$columnReference
+      source_cols <- as.character(unlist(fk$columnReference))
       ref <- fk$reference
       ref_resource <- ref$resource
-      ref_cols <- ref$columnReference
+      ref_cols <- as.character(unlist(ref$columnReference))
       
       target_tbl <- NULL
       if (!is.null(ref_resource) && ref_resource != "") {
@@ -1566,10 +1644,29 @@ check_referential_integrity <- function(t_obj, strict = FALSE) {
       target_rows <- target_tbl$data
       
       # Collect collision-safe, typed target keys.
-      target_key_values <- lapply(target_rows, function(target_row) {
-        lapply(ref_cols, function(cname) target_row[[cname]])
-      })
-      target_keys <- vapply(target_key_values, encode_key_values, character(1))
+      target_df <- NULL
+      if (inherits(target_rows, "csvw_table_data")) {
+        target_df <- attr(target_rows, "df")
+      } else if (is.data.frame(target_rows)) {
+        target_df <- target_rows
+      }
+      
+      if (!is.null(target_df)) {
+        any_target_list <- any(vapply(ref_cols, function(col) is.list(target_df[[col]]), logical(1)))
+        if (!any_target_list && length(ref_cols) == 1) {
+          target_keys <- target_df[[ref_cols[1]]]
+        } else {
+          target_key_values <- lapply(seq_len(nrow(target_df)), function(i) {
+            lapply(ref_cols, function(cname) target_df[[cname]][[i]])
+          })
+          target_keys <- vapply(target_key_values, encode_key_values, character(1))
+        }
+      } else {
+        target_key_values <- lapply(target_rows, function(target_row) {
+          lapply(ref_cols, function(cname) target_row[[cname]])
+        })
+        target_keys <- vapply(target_key_values, encode_key_values, character(1))
+      }
       
       # Check uniqueness of target keys
       if (any(duplicated(target_keys))) {
@@ -1592,42 +1689,131 @@ check_referential_integrity <- function(t_obj, strict = FALSE) {
       
       if (!any_list_valued) {
         # Vectorized path
-        source_key_values <- lapply(tbl_rows, function(source_row) {
-          lapply(source_cols, function(cname) source_row[[cname]])
-        })
-        s_keys <- vapply(source_key_values, encode_key_values, character(1))
-        all_null <- vapply(source_key_values, function(values) {
-          all(vapply(values, is_null_key_value, logical(1)))
-        }, logical(1))
+        tbl_df <- NULL
+        if (inherits(tbl_rows, "csvw_table_data")) {
+          tbl_df <- attr(tbl_rows, "df")
+        } else if (is.data.frame(tbl_rows)) {
+          tbl_df <- tbl_rows
+        }
         
-        # Check null columns
-        if (strict) {
-          null_indices <- which(all_null)
-          if (length(null_indices) > 0) {
-            success <- FALSE
-            if (length(null_indices) > 100) {
-              warning(sprintf("Foreign key columns are null for %d rows", length(null_indices)))
+        if (!is.null(tbl_df)) {
+          any_source_list <- any(vapply(source_cols, function(col) is.list(tbl_df[[col]]), logical(1)))
+          if (!any_source_list && length(source_cols) == 1) {
+            s_keys <- tbl_df[[source_cols[1]]]
+            all_null <- if (is.list(s_keys)) {
+              vapply(s_keys, function(x) is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x)), logical(1))
             } else {
-              for (idx in null_indices) {
-                warning(paste("Foreign key column is null at row", idx))
+              is.na(s_keys)
+            }
+            
+            # Check null columns
+            if (strict) {
+              null_indices <- which(all_null)
+              if (length(null_indices) > 0) {
+                success <- FALSE
+                if (length(null_indices) > 100) {
+                  warning(sprintf("Foreign key columns are null for %d rows", length(null_indices)))
+                } else {
+                  for (idx in null_indices) {
+                    warning(paste("Foreign key column is null at row", idx))
+                  }
+                }
+              }
+            }
+            
+            mismatch_indices <- which(!(s_keys %in% target_keys) & !all_null)
+            if (length(mismatch_indices) > 0) {
+              success <- FALSE
+              mismatch_indices <- mismatch_indices[!duplicated(s_keys[mismatch_indices])]
+              if (length(mismatch_indices) > 100) {
+                warning(sprintf("%d foreign key values not found in table %s", length(mismatch_indices), ref_resource))
+              } else {
+                for (idx in mismatch_indices) {
+                  val <- s_keys[idx]
+                  warning(paste(
+                    if (is.na(val) || is.null(val)) "<null>" else val,
+                    "not found in table", ref_resource
+                  ))
+                }
+              }
+            }
+          } else {
+            source_key_values <- lapply(seq_len(nrow(tbl_df)), function(i) {
+              lapply(source_cols, function(cname) tbl_df[[cname]][[i]])
+            })
+            s_keys <- vapply(source_key_values, encode_key_values, character(1))
+            all_null <- vapply(source_key_values, function(values) {
+              all(vapply(values, is_null_key_value, logical(1)))
+            }, logical(1))
+            
+            # Check null columns
+            if (strict) {
+              null_indices <- which(all_null)
+              if (length(null_indices) > 0) {
+                success <- FALSE
+                if (length(null_indices) > 100) {
+                  warning(sprintf("Foreign key columns are null for %d rows", length(null_indices)))
+                } else {
+                  for (idx in null_indices) {
+                    warning(paste("Foreign key column is null at row", idx))
+                  }
+                }
+              }
+            }
+            
+            mismatch_indices <- which(!(s_keys %in% target_keys) & !all_null)
+            if (length(mismatch_indices) > 0) {
+              success <- FALSE
+              mismatch_indices <- mismatch_indices[!duplicated(s_keys[mismatch_indices])]
+              if (length(mismatch_indices) > 100) {
+                warning(sprintf("%d foreign key values not found in table %s", length(mismatch_indices), ref_resource))
+              } else {
+                for (idx in mismatch_indices) {
+                  warning(paste(
+                    format_key_values(source_key_values[[idx]]),
+                    "not found in table", ref_resource
+                  ))
+                }
               }
             }
           }
-        }
-        
-        # Find mismatched keys (excluding nulls)
-        mismatch_indices <- which(!(s_keys %in% target_keys) & !all_null)
-        if (length(mismatch_indices) > 0) {
-          success <- FALSE
-          mismatch_indices <- mismatch_indices[!duplicated(s_keys[mismatch_indices])]
-          if (length(mismatch_indices) > 100) {
-            warning(sprintf("%d foreign key values not found in table %s", length(mismatch_indices), ref_resource))
-          } else {
-            for (idx in mismatch_indices) {
-              warning(paste(
-                format_key_values(source_key_values[[idx]]),
-                "not found in table", ref_resource
-              ))
+        } else {
+          source_key_values <- lapply(tbl_rows, function(source_row) {
+            lapply(source_cols, function(cname) source_row[[cname]])
+          })
+          s_keys <- vapply(source_key_values, encode_key_values, character(1))
+          all_null <- vapply(source_key_values, function(values) {
+            all(vapply(values, is_null_key_value, logical(1)))
+          }, logical(1))
+          
+          # Check null columns
+          if (strict) {
+            null_indices <- which(all_null)
+            if (length(null_indices) > 0) {
+              success <- FALSE
+              if (length(null_indices) > 100) {
+                warning(sprintf("Foreign key columns are null for %d rows", length(null_indices)))
+              } else {
+                for (idx in null_indices) {
+                  warning(paste("Foreign key column is null at row", idx))
+                }
+              }
+            }
+          }
+          
+          mismatch_indices <- which(!(s_keys %in% target_keys) & !all_null)
+          if (length(mismatch_indices) > 0) {
+            success <- FALSE
+            mismatch_indices <- mismatch_indices[!duplicated(s_keys[mismatch_indices])]
+            if (length(mismatch_indices) > 100) {
+              warning(sprintf("%d foreign key values not found in table %s", length(mismatch_indices), ref_resource))
+            } else {
+              for (idx in mismatch_indices) {
+                warning(paste(
+                  format_key_values(source_key_values[[idx]]),
+                  "not found in table", ref_resource
+                ))
+              }
             }
           }
         }
@@ -1710,7 +1896,7 @@ check_referential_integrity <- function(t_obj, strict = FALSE) {
 #' @return a csvw S3 object
 #' @export
 csvw <- function(url, md_url = NULL, validate = FALSE, lax = FALSE) {
-  warnings_list <- character()
+  warnings_list <- list()
   
   run_with_warnings <- function() {
     locate_res <- locate_metadata(url, md_url)
@@ -1835,7 +2021,7 @@ csvw <- function(url, md_url = NULL, validate = FALSE, lax = FALSE) {
     withCallingHandlers(
       run_with_warnings(),
       warning = function(w) {
-        warnings_list <<- c(warnings_list, w$message)
+        warnings_list[[length(warnings_list) + 1]] <<- w$message
         invokeRestart("muffleWarning")
       }
     )
@@ -1843,11 +2029,14 @@ csvw <- function(url, md_url = NULL, validate = FALSE, lax = FALSE) {
     run_with_warnings()
   }
   
+  warnings_vec <- unlist(warnings_list, recursive = FALSE, use.names = FALSE)
+  if (is.null(warnings_vec)) warnings_vec <- character()
+  
   res <- list(
     t = res_run$t,
     tables = res_run$tables,
-    is_valid = res_run$is_valid && length(warnings_list) == 0,
-    warnings = warnings_list
+    is_valid = res_run$is_valid && length(warnings_vec) == 0,
+    warnings = warnings_vec
   )
   class(res) <- "csvw"
   res
@@ -1881,7 +2070,38 @@ print.csvw <- function(x, ...) {
 #' @return data.frame
 #' @exportS3Method as.data.frame csvw_table
 as.data.frame.csvw_table <- function(x, ...) {
-  if (is.null(x$data) || length(x$data) == 0) {
+  if (is.null(x$data)) {
+    return(data.frame())
+  }
+  
+  if (is.data.frame(x$data)) {
+    if (nrow(x$data) == 0) {
+      return(data.frame())
+    }
+    
+    df <- x$data
+    col_names <- setdiff(names(df), c("_row", "_sourceRow"))
+    
+    df_cols <- list()
+    for (cname in col_names) {
+      col_data <- df[[cname]]
+      if (is.list(col_data)) {
+        sanitized <- lapply(col_data, function(cell) {
+          if (is.list(cell)) {
+            lapply(cell, function(el) if (is.null(el) || length(el) == 0) NA else el)
+          } else {
+            if (is.null(cell) || length(cell) == 0 || (length(cell) == 1 && is.na(cell))) NA else cell
+          }
+        })
+        df_cols[[cname]] <- I(sanitized)
+      } else {
+        df_cols[[cname]] <- col_data
+      }
+    }
+    return(as.data.frame(df_cols, stringsAsFactors = FALSE, check.names = FALSE))
+  }
+  
+  if (length(x$data) == 0) {
     return(data.frame())
   }
   
@@ -1983,33 +2203,71 @@ write_csvw <- function(tg, fname, strict = FALSE, ...) {
     col_names <- sapply(non_virtual_cols, function(col) if (!is.null(col$name)) col$name else col$header)
     
     # Write csv data
-    # Create a list of row values matching columns
-    df_rows <- list()
-    for (row in data) {
-      row_vals <- list()
-      for (col in non_virtual_cols) {
-        val <- row[[col$name]]
-        # Convert to string format suitable for CSV
-        if (is.null(val)) {
-          row_vals[[col$name]] <- ""
-        } else if (is.logical(val)) {
-          row_vals[[col$name]] <- if (val) "true" else "false"
-        } else if (inherits(val, "POSIXt")) {
-          row_vals[[col$name]] <- format(val, "%Y-%m-%dT%H:%M:%SZ")
-        } else if (inherits(val, "Date")) {
-          row_vals[[col$name]] <- format(val, "%Y-%m-%d")
-        } else if (is.list(val)) {
-          # List datatype: collapse with separator
-          sep <- if (!is.null(col$separator)) col$separator else " "
-          row_vals[[col$name]] <- paste(unlist(val), collapse = sep)
+    # Column-wise construction of formatted data.frame
+    nrow_data <- if (is.data.frame(data)) nrow(data) else length(data)
+    if (nrow_data == 0) {
+      df <- data.frame(matrix(ncol = length(non_virtual_cols), nrow = 0))
+      names(df) <- col_names
+    } else {
+      extract_col_vals <- function(data, cname) {
+        if (is.data.frame(data)) {
+          data[[cname]]
         } else {
-          row_vals[[col$name]] <- as.character(val)
+          lapply(data, function(row) row[[cname]])
         }
       }
-      df_rows[[length(df_rows) + 1]] <- row_vals
+      
+      df_cols <- list()
+      for (col in non_virtual_cols) {
+        cname <- col$name
+        col_vals <- extract_col_vals(data, cname)
+        formatted <- NULL
+        
+        is_list_val_col <- !is.null(col$separator) && col$separator != ""
+        if (is.list(col_vals) && !is_list_val_col) {
+          any_long <- any(vapply(col_vals, length, integer(1)) > 1)
+          if (!any_long) {
+            col_vals <- sapply(col_vals, function(val) if (is.null(val) || length(val) == 0) NA else val)
+          }
+        }
+        
+        if (is.null(col_vals)) {
+          formatted <- rep("", nrow_data)
+        } else if (is.list(col_vals)) {
+          sep <- if (!is.null(col$separator)) col$separator else " "
+          formatted <- vapply(col_vals, function(val) {
+            if (is.null(val) || length(val) == 0 || (length(val) == 1 && is.na(val))) {
+              ""
+            } else if (is.logical(val)) {
+              paste(ifelse(val, "true", "false"), collapse = sep)
+            } else if (inherits(val, "POSIXt")) {
+              paste(format(val, "%Y-%m-%dT%H:%M:%SZ"), collapse = sep)
+            } else if (inherits(val, "Date")) {
+              paste(format(val, "%Y-%m-%d"), collapse = sep)
+            } else {
+              paste(as.character(unlist(val)), collapse = sep)
+            }
+          }, character(1))
+        } else {
+          na_mask <- is.na(col_vals)
+          if (is.logical(col_vals)) {
+            formatted <- ifelse(col_vals, "true", "false")
+          } else if (inherits(col_vals, "POSIXt")) {
+            formatted <- format(col_vals, "%Y-%m-%dT%H:%M:%SZ")
+          } else if (inherits(col_vals, "Date")) {
+            formatted <- format(col_vals, "%Y-%m-%d")
+          } else {
+            formatted <- as.character(col_vals)
+          }
+          formatted[na_mask] <- ""
+        }
+        
+        out_name <- if (!is.null(col$name)) col$name else col$header
+        df_cols[[out_name]] <- formatted
+      }
+      
+      df <- as.data.frame(df_cols, stringsAsFactors = FALSE, check.names = FALSE)
     }
-    
-    df <- do.call(rbind, lapply(df_rows, as.data.frame, stringsAsFactors = FALSE))
     
     # Write using readr::write_delim
     dialect <- table$dialect
@@ -2144,4 +2402,109 @@ get_table.csvw <- function(x, name, ...) {
     }
   }
   return(NULL)
+}
+
+#' S3 length method for csvw_table_data
+#' @exportS3Method length csvw_table_data
+length.csvw_table_data <- function(x) {
+  df <- attr(x, "df")
+  if (is.null(df)) 0L else nrow(df)
+}
+
+#' S3 subsetting method [[ for csvw_table_data
+#' @exportS3Method `[[` csvw_table_data
+`[[.csvw_table_data` <- function(x, i, ...) {
+  df <- attr(x, "df")
+  tbl <- attr(x, "table")
+  get_row_context_from_df(df, tbl, i)
+}
+
+#' S3 as.list method for csvw_table_data
+#' @exportS3Method as.list csvw_table_data
+as.list.csvw_table_data <- function(x, ...) {
+  df <- attr(x, "df")
+  tbl <- attr(x, "table")
+  lapply(seq_len(nrow(df)), function(i) get_row_context_from_df(df, tbl, i))
+}
+
+#' S3 as.data.frame method for csvw_table_data
+#' @exportS3Method as.data.frame csvw_table_data
+as.data.frame.csvw_table_data <- function(x, ...) {
+  df <- attr(x, "df")
+  if (is.null(df) || nrow(df) == 0) {
+    return(data.frame())
+  }
+  
+  col_names <- setdiff(names(df), c("_row", "_sourceRow"))
+  
+  df_cols <- list()
+  for (cname in col_names) {
+    col_data <- df[[cname]]
+    if (is.list(col_data)) {
+      sanitized <- lapply(col_data, function(cell) {
+        if (is.list(cell)) {
+          lapply(cell, function(el) if (is.null(el) || length(el) == 0) NA else el)
+        } else {
+          if (is.null(cell) || length(cell) == 0 || (length(cell) == 1 && is.na(cell))) NA else cell
+        }
+      })
+      df_cols[[cname]] <- I(sanitized)
+    } else {
+      df_cols[[cname]] <- col_data
+    }
+  }
+  as.data.frame(df_cols, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+#' S3 print method for csvw_table_data
+#' @exportS3Method print csvw_table_data
+print.csvw_table_data <- function(x, ...) {
+  df <- attr(x, "df")
+  cat("CSVW Table Data backing data.frame (", nrow(df), " x ", ncol(df), "):\n", sep = "")
+  print(as.data.frame(x))
+}
+
+# Helper to lazily construct row context from backing data.frame and table
+get_row_context_from_df <- function(df, tbl, i) {
+  row_context <- list()
+  row_context[["_row"]] <- df[["_row"]][i]
+  row_context[["_sourceRow"]] <- df[["_sourceRow"]][i]
+  
+  col_names <- names(df)
+  col_names <- setdiff(col_names, c("_row", "_sourceRow"))
+  
+  for (cname in col_names) {
+    val <- if (is.list(df[[cname]])) df[[cname]][[i]] else df[[cname]][i]
+    if (!is.null(val)) {
+      row_context[[cname]] <- val
+    }
+  }
+  
+  schema <- tbl$tableSchema
+  if (!is.null(schema)) {
+    columns <- schema$columns
+    virtual_cols <- list()
+    for (col in columns) {
+      if (col$virtual) virtual_cols[[length(virtual_cols) + 1]] <- col
+    }
+    if (length(virtual_cols) > 0) {
+      regular_cols_count <- length(columns) - length(virtual_cols)
+      for (v_idx in seq_along(virtual_cols)) {
+        col <- virtual_cols[[v_idx]]
+        valUrl <- col$valueUrl
+        if (!is.null(valUrl)) {
+          cell_context <- row_context
+          cell_context[["_name"]] <- col$name
+          v_col_idx <- regular_cols_count + v_idx
+          cell_context[["_column"]] <- v_col_idx
+          cell_context[["_sourceColumn"]] <- v_col_idx
+          row_context[[col$name]] <- expand_uri_template(valUrl, cell_context)
+        } else {
+          row_context[[col$name]] <- col$default
+        }
+      }
+    }
+  }
+  
+  return(row_context)
 }

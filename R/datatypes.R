@@ -401,16 +401,20 @@ parse_cell <- function(v, dt, strict = TRUE, validate = TRUE) {
   base_type <- dt[["base"]]
   format <- dt[["format"]]
   
+  if (strict) {
+    parsed_val <- parse_datatype_value(v, base_type, format)
+    if (validate && !is.null(parsed_val)) {
+      validate_constraints(parsed_val, dt)
+    }
+    return(parsed_val)
+  }
+  
   # Parse according to base type
   parsed_val <- tryCatch({
     parse_datatype_value(v, base_type, format)
   }, error = function(e) {
-    if (strict) {
-      stop(e$message)
-    } else {
-      warning(paste("Invalid column value:", v, ";", e$message))
-      return(v)
-    }
+    warning(paste("Invalid column value:", v, ";", e$message))
+    return(v)
   })
   
   # Validate datatype constraints if parsing was successful
@@ -418,11 +422,7 @@ parse_cell <- function(v, dt, strict = TRUE, validate = TRUE) {
     tryCatch({
       validate_constraints(parsed_val, dt)
     }, error = function(e) {
-      if (strict) {
-        stop(e$message)
-      } else {
-        warning(paste("Constraint violation:", v, ";", e$message))
-      }
+      warning(paste("Constraint violation:", v, ";", e$message))
     })
   }
   
