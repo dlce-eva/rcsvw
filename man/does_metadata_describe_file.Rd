@@ -4,14 +4,12 @@
 \alias{does_metadata_describe_file}
 \title{Check if metadata describes the CSV file}
 \usage{
-does_metadata_describe_file(md, url, md_url = NULL)
+does_metadata_describe_file(md, url)
 }
 \arguments{
 \item{md}{list representing parsed metadata}
 
 \item{url}{path or URL of CSV file}
-
-\item{md_url}{optional location of the metadata document, used as its base URL}
 }
 \value{
 logical
