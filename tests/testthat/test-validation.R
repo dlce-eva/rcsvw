@@ -102,3 +102,11 @@ test_that("NA string is not considered null unless explicitly in null spec", {
   unlink(csv_file)
   unlink(md_file)
 })
+
+test_that("validate_csvw returns FALSE rather than leaking parser errors", {
+  invalid_metadata <- tempfile(fileext = ".json")
+  writeLines('{"@context":"http://www.w3.org/ns/csvw","tables":[]}', invalid_metadata)
+  on.exit(unlink(invalid_metadata))
+
+  expect_false(validate_csvw(invalid_metadata))
+})

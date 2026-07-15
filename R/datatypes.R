@@ -15,6 +15,43 @@ INTEGER_RANGES <- list(
   negativeInteger = c(-Inf, -1)
 )
 
+# Bounds which cannot be represented exactly as R doubles are kept as text
+# for exact lexical comparison.
+WIDE_INTEGER_RANGES <- list(
+  unsignedLong = c("0", "18446744073709551615"),
+  long = c("-9223372036854775808", "9223372036854775807")
+)
+
+canonical_integer_string <- function(value) {
+  value <- trimws(value)
+  negative <- startsWith(value, "-")
+  digits <- sub("^[+-]", "", value)
+  digits <- sub("^0+(?=[0-9])", "", digits, perl = TRUE)
+  if (digits == "0") negative <- FALSE
+  paste0(if (negative) "-" else "", digits)
+}
+
+compare_integer_strings <- function(left, right) {
+  left <- canonical_integer_string(left)
+  right <- canonical_integer_string(right)
+  left_negative <- startsWith(left, "-")
+  right_negative <- startsWith(right, "-")
+  if (left_negative != right_negative) return(if (left_negative) -1L else 1L)
+
+  left_digits <- sub("^-", "", left)
+  right_digits <- sub("^-", "", right)
+  magnitude <- if (nchar(left_digits) != nchar(right_digits)) {
+    if (nchar(left_digits) < nchar(right_digits)) -1L else 1L
+  } else if (left_digits == right_digits) {
+    0L
+  } else if (left_digits < right_digits) {
+    -1L
+  } else {
+    1L
+  }
+  if (left_negative) -magnitude else magnitude
+}
+
 BUILT_IN_DATATYPES <- c(
   "anyAtomicType", "anyURI", "base64Binary", "boolean", "date", "dateTime", "dateTimeStamp", "decimal", 
   "integer", "long", "int", "short", "byte", "nonNegativeInteger", "positiveInteger", 
@@ -428,8 +465,24 @@ parse_datatype_value <- function(v, base_type, format = NULL) {
   
   # Integers
   if (base_type == "integer" || base_type == "int" || base_type %in% names(INTEGER_RANGES)) {
+    plain_integer <- is.null(format) && grepl("^[+-]?[0-9]+$", trimws(v))
+    if (plain_integer) {
+      canonical <- canonical_integer_string(v)
+      if (base_type %in% names(WIDE_INTEGER_RANGES)) {
+        limits <- WIDE_INTEGER_RANGES[[base_type]]
+        if (compare_integer_strings(canonical, limits[1]) < 0 ||
+            compare_integer_strings(canonical, limits[2]) > 0) {
+          stop(paste(base_type, "must be an integer between", limits[1], "and", limits[2]))
+        }
+      }
+      if (compare_integer_strings(canonical, "9007199254740992") > 0 ||
+          compare_integer_strings(canonical, "-9007199254740992") < 0) {
+        return(canonical)
+      }
+    }
+
     val <- parse_decimal(v, format, base_type = "integer")
-    if (val %% 1 != 0) {
+    if (suppressWarnings(val %% 1) != 0) {
       stop(paste("value must be an integer, but got:", val))
     }
     
@@ -440,7 +493,13 @@ parse_datatype_value <- function(v, base_type, format = NULL) {
         stop(paste(base_type, "must be an integer between", limits[1], "and", limits[2]))
       }
     }
-    return(as.integer(val))
+    # R's native integer type is signed 32-bit. Coercing wider CSVW
+    # integer types with as.integer() silently produces NA, so keep exactly
+    # representable wider values as doubles and very large values as strings.
+    if (val >= -.Machine$integer.max - 1 && val <= .Machine$integer.max) {
+      return(as.integer(val))
+    }
+    return(val)
   }
   
   # Date / Time / DateTime
@@ -842,38 +901,52 @@ validate_constraints <- function(val, dt) {
   maxExclusive <- dt[["maxExclusive"]]
   
   base_dt <- dt[["base"]]
+  integer_datatype <- base_dt == "integer" || base_dt == "int" ||
+    base_dt %in% names(INTEGER_RANGES)
   
   parse_bound <- function(b, b_type) {
     if (is.null(b)) return(NULL)
     if (is.numeric(b) || inherits(b, "Date") || inherits(b, "POSIXt")) return(b)
     parse_datatype_value(as.character(b), b_type)
   }
+
+  compare_values <- function(left, right) {
+    if (integer_datatype && is.character(left) && is.character(right) &&
+        grepl("^[+-]?[0-9]+$", left) && grepl("^[+-]?[0-9]+$", right)) {
+      return(compare_integer_strings(left, right))
+    }
+    numeric_left <- if (is.character(left)) suppressWarnings(as.numeric(left)) else left
+    numeric_right <- if (is.character(right)) suppressWarnings(as.numeric(right)) else right
+    if (numeric_left < numeric_right) return(-1L)
+    if (numeric_left > numeric_right) return(1L)
+    0L
+  }
   
   # Min checks
   min_val <- parse_bound(minimum, base_dt)
-  if (!is.null(min_val) && val < min_val) {
+  if (!is.null(min_val) && compare_values(val, min_val) < 0) {
     stop(paste("value must be >=", min_val))
   }
   min_inc <- parse_bound(minInclusive, base_dt)
-  if (!is.null(min_inc) && val < min_inc) {
+  if (!is.null(min_inc) && compare_values(val, min_inc) < 0) {
     stop(paste("value must be >=", min_inc))
   }
   min_exc <- parse_bound(minExclusive, base_dt)
-  if (!is.null(min_exc) && val <= min_exc) {
+  if (!is.null(min_exc) && compare_values(val, min_exc) <= 0) {
     stop(paste("value must be >", min_exc))
   }
   
   # Max checks
   max_val <- parse_bound(maximum, base_dt)
-  if (!is.null(max_val) && val > max_val) {
+  if (!is.null(max_val) && compare_values(val, max_val) > 0) {
     stop(paste("value must be <=", max_val))
   }
   max_inc <- parse_bound(maxInclusive, base_dt)
-  if (!is.null(max_inc) && val > max_inc) {
+  if (!is.null(max_inc) && compare_values(val, max_inc) > 0) {
     stop(paste("value must be <=", max_inc))
   }
   max_exc <- parse_bound(maxExclusive, base_dt)
-  if (!is.null(max_exc) && val >= max_exc) {
+  if (!is.null(max_exc) && compare_values(val, max_exc) >= 0) {
     stop(paste("value must be <", max_exc))
   }
   

@@ -89,4 +89,34 @@ test_that("utf-8-sig encoding is understood and mapped to UTF-8", {
   expect_equal(d_upper$encoding, "UTF-8")
 })
 
+test_that("header-only tables do not create bogus rows", {
+  tmp <- tempfile(fileext = ".csv")
+  writeLines("a,b", tmp)
+  on.exit(unlink(tmp))
+
+  rows <- read_table_csv(parse_table(list(url = tmp)))
+  expect_length(rows, 0)
+})
+
+test_that("blank rows and comments follow dialect settings", {
+  blank_file <- tempfile(fileext = ".csv")
+  writeLines(c("value", "1", "", "2"), blank_file)
+  on.exit(unlink(blank_file), add = TRUE)
+
+  keep_blank <- parse_table(list(
+    url = blank_file,
+    dialect = list(skipBlankRows = FALSE)
+  ))
+  expect_length(read_table_csv(keep_blank), 3)
+
+  comment_file <- tempfile(fileext = ".csv")
+  writeLines(c("value", "# a comment", "1"), comment_file)
+  on.exit(unlink(comment_file), add = TRUE)
+
+  with_comments <- parse_table(list(
+    url = comment_file,
+    dialect = list(commentPrefix = "#")
+  ))
+  expect_length(read_table_csv(with_comments), 1)
+})
 

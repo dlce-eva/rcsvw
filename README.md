@@ -1,7 +1,9 @@
 # rcsvw
 R package implementing the CSVW spec
 
-`rcsvw` is an R package for reading, writing, and validating CSVW (CSV on the Web) metadata and datasets. It is fully compliant with the W3C CSV on the Web specifications, converting CSV tables described by JSON-LD metadata into standardized R `data.frame` objects, JSON serialization, and validating constraints.
+`rcsvw` is an R package for reading, writing, and validating CSVW (CSV on the Web) metadata and datasets. It implements the commonly used parts of the W3C CSV on the Web specifications, converting CSV tables described by JSON-LD metadata into R `data.frame` objects, JSON serialization, and validation results.
+
+The package is under active development and does not yet implement every CSVW edge case. In particular, metadata writing is not yet a lossless round trip, custom line terminators are not supported, warning-only validation outcomes are still reported conservatively, and very large XSD integers are returned as strings when R cannot represent them exactly.
 
 
 ## Overview
@@ -131,5 +133,4 @@ Writes table data to CSV files and serializes the CSVW schema properties to a JS
 
 #### `as.data.frame(x, ...)`
 Converts a `csvw_table` or `csvw_table_group` object into R `data.frame` format, preserving column types (integer, decimal, logical, Date, POSIXct).
-
 
